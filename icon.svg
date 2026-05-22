@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#047857"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <g fill="#ffffff">
+    <!-- Livro estilizado -->
+    <path d="M 128 160 Q 128 144 144 144 L 240 144 Q 256 144 256 160 L 256 384 Q 256 400 240 400 L 144 400 Q 128 400 128 384 Z" opacity="0.95"/>
+    <path d="M 256 160 Q 256 144 272 144 L 368 144 Q 384 144 384 160 L 384 384 Q 384 400 368 400 L 272 400 Q 256 400 256 384 Z" opacity="0.85"/>
+    <!-- Linhas representando texto -->
+    <rect x="152" y="184" width="80" height="6" rx="2" fill="#047857" opacity="0.7"/>
+    <rect x="152" y="208" width="64" height="6" rx="2" fill="#047857" opacity="0.7"/>
+    <rect x="152" y="232" width="80" height="6" rx="2" fill="#047857" opacity="0.7"/>
+    <rect x="280" y="184" width="80" height="6" rx="2" fill="#047857" opacity="0.7"/>
+    <rect x="280" y="208" width="64" height="6" rx="2" fill="#047857" opacity="0.7"/>
+    <rect x="280" y="232" width="80" height="6" rx="2" fill="#047857" opacity="0.7"/>
+  </g>
+  <!-- Texto TJ-CE -->
+  <text x="256" y="356" text-anchor="middle" font-family="system-ui, -apple-system, Helvetica, sans-serif" font-size="64" font-weight="800" fill="#ffffff" letter-spacing="2">TJ·CE</text>
+</svg>

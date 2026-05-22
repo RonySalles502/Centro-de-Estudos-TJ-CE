@@ -1,0 +1,44 @@
+📚 *Centro de Estudos TJ-CE 2026*
+
+App de estudos pro concurso de Analista Judiciário do TJ-CE (FCC), com cronograma de 84 dias, banco de questões, redações com espelhos, flashcards, simulados e estatísticas.
+
+🔗 *Link:* [COLE_SUA_URL_AQUI]
+
+━━━━━━━━━━━━━━━━━━
+
+📱 *Como instalar no celular* (recomendado)
+
+*iPhone (Safari):*
+1. Abra o link no Safari
+2. Toque no botão de compartilhar (quadrado com seta pra cima, embaixo)
+3. Role e toque em "Adicionar à Tela de Início"
+4. Toque em "Adicionar"
+
+*Android (Chrome):*
+1. Abra o link no Chrome
+2. Toque no menu (três pontinhos no canto)
+3. Toque em "Instalar aplicativo" ou "Adicionar à tela inicial"
+4. Confirme
+
+*Computador (Chrome ou Edge):*
+1. Abra o link
+2. Clique no ícone de "instalar" na barra de endereço (canto direito, parece uma telinha com seta)
+3. Clique em "Instalar"
+
+Depois de instalado, vira um app no celular/computador, com ícone próprio. Pode usar sem internet depois da primeira abertura.
+
+━━━━━━━━━━━━━━━━━━
+
+⚠️ *Avisos importantes*
+
+🔸 *Cada um tem seus próprios dados.* O progresso fica salvo só no seu aparelho — não é compartilhado entre celular e computador automaticamente.
+
+🔸 *Faça backup com frequência.* Na aba "Backup & Dados", exporte um arquivo JSON pelo menos uma vez por semana. Guarde no Drive, Google Fotos ou e-mail. Sem backup, se algo der errado ou trocar de aparelho, perde tudo.
+
+🔸 *iPhone tem uma limitação:* o Safari pode apagar os dados se passarem ~7 dias sem abrir o app. Quem usa iPhone, exporte backup com mais frequência (a cada 2-3 dias).
+
+🔸 *Android e desktop (Chrome/Edge):* tem uma opção "Sincronização automática com pasta" na aba Backup. Conecta uma pasta que esteja sincronizada com Google Drive, OneDrive ou iCloud no PC, e o backup vai automático pra nuvem.
+
+━━━━━━━━━━━━━━━━━━
+
+🆘 *Se der problema:* me chama aqui.
