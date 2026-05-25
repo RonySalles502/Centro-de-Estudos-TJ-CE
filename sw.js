@@ -2,7 +2,7 @@
 // Estratégia: cache-first para assets locais, network-first para CDNs (com fallback ao cache).
 // Bump CACHE_VERSION quando publicar mudanças significativas no HTML.
 
-const CACHE_VERSION = 'tjce-v1';
+const CACHE_VERSION = 'tjce-v3';
 const CACHE_NAME = `tjce-cache-${CACHE_VERSION}`;
 
 // Assets locais que devem ficar disponíveis offline assim que possível.

@@ -313,10 +313,11 @@ function defaultState() {
     apostas_erros: [],
     notas: {},
     flashcards: [],
+    pendencias: [],
     pomodoro: { ciclos_total: 0, focos_minutos: 0 },
     streak: { ultima_data: null, dias_seguidos: 0 },
     ultimo_backup: null,
-    versao: 4,
+    versao: 5,
   };
 }
 // Migração defensiva: garante que estados salvos antes desta versão tenham os novos campos
@@ -333,9 +334,44 @@ function migrarEstado(s) {
   return { ...d, ...s,
     flashcards: Array.isArray(s.flashcards) ? s.flashcards : [],
     apostas_erros: Array.isArray(s.apostas_erros) ? s.apostas_erros.map(normalizarEntrada) : [],
+    pendencias: Array.isArray(s.pendencias) ? s.pendencias : [],
     ultimo_backup: s.ultimo_backup || null,
-    versao: 4,
+    versao: 5,
   };
+}
+
+// ===================== PENDÊNCIAS (cumprimento parcial + realocação para domingo) =====================
+// Helper: identifica se um dia do cronograma é um "domingo de pendências" disponível.
+// Critério: dia_sem === "Domingo" AND atividade começa com "Pendências" (exclui domingos de simulado e prova).
+function ehDomingoDePendencias(plano) {
+  if (!plano) return false;
+  return plano.dia_sem === 'Domingo' &&
+         plano.tipo === 'Domingo' &&
+         typeof plano.atividade === 'string' &&
+         plano.atividade.toLowerCase().startsWith('pendências');
+}
+// Encontra o próximo domingo de pendências a partir de uma data (ISO).
+// Se não houver nenhum domingo disponível pela frente, tenta o sábado de revisão final (id 81 - tipo "RevisãoFinal" com "Quadro de Apostas e Erros").
+// Se nem isso, retorna null (pendência sem destino — fica visível como aviso).
+function proximoDestinoPendencia(dataOrigemISO) {
+  const candidatos = DADOS.cronograma.filter(p => p.data > dataOrigemISO);
+  const domingoDisponivel = candidatos.find(ehDomingoDePendencias);
+  if (domingoDisponivel) return domingoDisponivel.id;
+  // Fallback: sábado de pendências da semana final (busca por atividade contendo "Quadro de Apostas e Erros" não-domingo)
+  const fallback = candidatos.find(p =>
+    p.dia_sem === 'Sábado' &&
+    typeof p.atividade === 'string' &&
+    p.atividade.toLowerCase().includes('apostas e erros')
+  );
+  return fallback ? fallback.id : null;
+}
+// Retorna lista de pendências (não concluídas) alocadas para um dia específico
+function pendenciasDoDia(state, diaId) {
+  return (state.pendencias || []).filter(p => p.alocada_para_dia_id === diaId && !p.concluida);
+}
+// Gera id curto para pendência
+function novoIdPendencia() {
+  return 'p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
 }
 
 // ===================== HELPERS =====================
@@ -572,8 +608,9 @@ function App() {
   
   const dias = diasAteProva();
   const totalCiclos = DADOS.cronograma.filter(p => p.c1).length;
+  const cont = (st) => (st === 'CUMPRIDO' || st === 'CUMPRIDO_TARDIO') ? 1 : 0;
   const ciclosFeitos = Object.values(state.cronograma_status).reduce((acc, st) =>
-    acc + (st.c1 === 'CUMPRIDO' ? 1 : 0) + (st.c2 === 'CUMPRIDO' ? 1 : 0) + (st.c3 === 'CUMPRIDO' ? 1 : 0), 0);
+    acc + cont(st.c1) + cont(st.c2) + cont(st.c3), 0);
   const pctCronograma = totalCiclos > 0 ? Math.round((ciclosFeitos / (totalCiclos * 3)) * 100) : 0;
   
   const menus = [
@@ -684,7 +721,18 @@ function Dashboard({ state, setState, dias, pctCronograma, setView, nomeExibido 
   const respondidas = Object.keys(state.questoes_estado).length;
   const acertos = Object.values(state.questoes_estado).filter(q => q.acertou).length;
   const pctAcerto = respondidas > 0 ? Math.round(acertos / respondidas * 100) : 0;
-  
+
+  // Análise de pendências adiadas
+  const pendenciasAtivas = (state.pendencias || []).filter(p => !p.concluida);
+  // Agrupa por dia de destino para identificar domingos sobrecarregados
+  const cargaPorDestino = {};
+  pendenciasAtivas.forEach(p => {
+    const k = p.alocada_para_dia_id ?? 'sem_destino';
+    cargaPorDestino[k] = (cargaPorDestino[k] || 0) + 1;
+  });
+  const destinosSobrecarregados = Object.entries(cargaPorDestino).filter(([k,v]) => k !== 'sem_destino' && v >= 3);
+  const semDestino = pendenciasAtivas.filter(p => p.alocada_para_dia_id == null);
+
   return (
     <div>
       <h2 className="text-3xl font-bold text-slate-800 mb-1">Olá, {nomeExibido}! 👋</h2>
@@ -695,6 +743,40 @@ function Dashboard({ state, setState, dias, pctCronograma, setView, nomeExibido 
         <Card title="Questões resolvidas" value={respondidas} subtitle={`de ${totalQuestoes} disponíveis`} color="from-blue-500 to-indigo-600"/>
         <Card title="% Acerto geral" value={`${pctAcerto}%`} subtitle={`${acertos}/${respondidas}`} color="from-purple-500 to-pink-500"/>
       </div>
+
+      {/* Bloco de aviso: pendências acumuladas (só aparece se houver) */}
+      {pendenciasAtivas.length > 0 && (
+        <div className={`mb-6 rounded-xl border p-4 ${semDestino.length > 0 ? 'bg-red-50 border-red-300' : destinosSobrecarregados.length > 0 ? 'bg-amber-50 border-amber-300' : 'bg-violet-50 border-violet-200'}`}>
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-slate-800 mb-1">
+                📥 {pendenciasAtivas.length} ciclo{pendenciasAtivas.length === 1 ? '' : 's'} adiado{pendenciasAtivas.length === 1 ? '' : 's'} (pendente{pendenciasAtivas.length === 1 ? '' : 's'} de execução)
+              </div>
+              <div className="text-xs text-slate-700 space-y-1">
+                {Object.entries(cargaPorDestino).map(([destId, qtd]) => {
+                  if (destId === 'sem_destino') {
+                    return <div key={destId} className="text-red-800 font-semibold">⚠ {qtd} pendência{qtd === 1 ? '' : 's'} <strong>sem destino</strong> (não há mais domingos no cronograma).</div>;
+                  }
+                  const d = DADOS.cronograma.find(c => c.id === Number(destId));
+                  if (!d) return null;
+                  const sobrecarga = qtd >= 3;
+                  return (
+                    <div key={destId} className={sobrecarga ? 'text-amber-800 font-semibold' : ''}>
+                      {sobrecarga ? '⚠ ' : '• '}
+                      {fmtData(d.data)} ({d.dia_sem}): <strong>{qtd}</strong> pendência{qtd === 1 ? '' : 's'} alocada{qtd === 1 ? '' : 's'}
+                      {sobrecarga && ' — sobrecarregado'}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <button onClick={() => setView('cronograma')} className="px-3 py-1.5 bg-violet-600 text-white text-xs rounded font-semibold hover:bg-violet-700">
+              Ver no cronograma
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-5">
           <div className="flex items-center justify-between mb-4">
@@ -750,51 +832,289 @@ function QuickAction({ icon, title, desc, onClick }) {
 
 // ===================== CRONOGRAMA =====================
 function DiaDetalhe({ plano, state, setState }) {
+  const [modalAdiar, setModalAdiar] = useState(null); // { ciclo, grupo_bloco, descricao_inicial }
+
+  // Render especial para dias sem ciclos (domingos, sábados de simulado, etc)
   if (!plano.c1) {
-    return <div className="text-slate-500 text-sm p-2 bg-slate-50 rounded">{plano.atividade || 'Sem atividade'}</div>;
+    const pendencias = pendenciasDoDia(state, plano.id);
+    return (
+      <div className="space-y-3">
+        <div className="text-slate-700 text-sm p-3 bg-slate-50 rounded border border-slate-200">
+          <div className="font-semibold text-slate-800 mb-1">Atividade programada</div>
+          {plano.atividade || 'Sem atividade'}
+        </div>
+        {pendencias.length > 0 && (
+          <PendenciasAlocadas plano={plano} pendencias={pendencias} state={state} setState={setState}/>
+        )}
+      </div>
+    );
   }
+
   const status = state.cronograma_status[plano.id] || {c1:'PENDENTE',c2:'PENDENTE',c3:'PENDENTE'};
-  const toggleStatus = (cic) => {
+  const setCicloStatus = (cic, novoStatus) => {
     setState(s => ({...s,
       cronograma_status: {...s.cronograma_status,
-        [plano.id]: {...status, [cic]: status[cic] === 'CUMPRIDO' ? 'PENDENTE' : 'CUMPRIDO'}
+        [plano.id]: {...(s.cronograma_status[plano.id] || {c1:'PENDENTE',c2:'PENDENTE',c3:'PENDENTE'}), [cic]: novoStatus}
       }
     }));
   };
+  const toggleCumprido = (cic) => setCicloStatus(cic, status[cic] === 'CUMPRIDO' ? 'PENDENTE' : 'CUMPRIDO');
+  const abrirModalAdiar = (cic) => {
+    const dadosCiclo = plano[cic];
+    if (!dadosCiclo) return;
+    const info = blocoInfo(dadosCiclo.grupo, dadosCiclo.bloco);
+    setModalAdiar({
+      ciclo: cic,
+      grupo_bloco: `${dadosCiclo.grupo}-${dadosCiclo.bloco}`,
+      disciplina: info?.disciplina || '',
+      titulo_bloco: info?.titulo || info?.conteudo?.slice(0, 80) || '',
+    });
+  };
+  const desfazerAdiamento = (cic) => {
+    // Remove pendência associada e volta ciclo para PENDENTE
+    setState(s => ({
+      ...s,
+      pendencias: (s.pendencias || []).filter(p => !(p.origem_dia_id === plano.id && p.ciclo === cic && !p.concluida)),
+      cronograma_status: {...s.cronograma_status,
+        [plano.id]: {...(s.cronograma_status[plano.id] || {c1:'PENDENTE',c2:'PENDENTE',c3:'PENDENTE'}), [cic]: 'PENDENTE'}
+      }
+    }));
+  };
+  const confirmarAdiamento = (descricao) => {
+    if (!modalAdiar) return;
+    const cic = modalAdiar.ciclo;
+    const dadosCiclo = plano[cic];
+    const destinoId = proximoDestinoPendencia(plano.data);
+    const novaPendencia = {
+      id: novoIdPendencia(),
+      origem_dia_id: plano.id,
+      origem_data: plano.data,
+      ciclo: cic,
+      grupo: dadosCiclo.grupo,
+      bloco: dadosCiclo.bloco,
+      descricao: descricao || '',
+      alocada_para_dia_id: destinoId,
+      criada_em: new Date().toISOString(),
+      concluida: false,
+    };
+    setState(s => ({
+      ...s,
+      pendencias: [...(s.pendencias || []), novaPendencia],
+      cronograma_status: {...s.cronograma_status,
+        [plano.id]: {...(s.cronograma_status[plano.id] || {c1:'PENDENTE',c2:'PENDENTE',c3:'PENDENTE'}), [cic]: 'ADIADO'}
+      }
+    }));
+    setModalAdiar(null);
+  };
+
   const c1info = blocoInfo(plano.c1?.grupo, plano.c1?.bloco);
   const c2info = blocoInfo(plano.c2?.grupo, plano.c2?.bloco);
   const c3info = blocoInfo(plano.c3?.grupo, plano.c3?.bloco);
   return (
     <div className="space-y-3">
-      <CicloBox cor="emerald" titulo="🟢 Ciclo 1 — Teoria (1h30)" info={c1info} grupo_bloco={`${plano.c1.grupo}-${plano.c1.bloco}`} status={status.c1} onToggle={() => toggleStatus('c1')}/>
+      <CicloBox cor="emerald" titulo="🟢 Ciclo 1 — Teoria (1h30)" info={c1info} grupo_bloco={`${plano.c1.grupo}-${plano.c1.bloco}`} status={status.c1}
+        pendencia={(state.pendencias || []).find(p => p.origem_dia_id === plano.id && p.ciclo === 'c1' && !p.concluida)}
+        onCumprir={() => toggleCumprido('c1')} onAdiar={() => abrirModalAdiar('c1')} onDesfazer={() => desfazerAdiamento('c1')}/>
       {c2info ? (
-        <CicloBox cor="amber" titulo="🟡 Ciclo 2 — Lei seca focada (30 min)" info={c2info} grupo_bloco={`${plano.c2.grupo}-${plano.c2.bloco}`} status={status.c2} onToggle={() => toggleStatus('c2')} mostrarLei/>
+        <CicloBox cor="amber" titulo="🟡 Ciclo 2 — Lei seca focada (30 min)" info={c2info} grupo_bloco={`${plano.c2.grupo}-${plano.c2.bloco}`} status={status.c2}
+          pendencia={(state.pendencias || []).find(p => p.origem_dia_id === plano.id && p.ciclo === 'c2' && !p.concluida)}
+          onCumprir={() => toggleCumprido('c2')} onAdiar={() => abrirModalAdiar('c2')} onDesfazer={() => desfazerAdiamento('c2')} mostrarLei/>
       ) : <CicloVazio cor="amber" titulo="🟡 Ciclo 2 — Lei seca" texto="(primeiro dia — sem ciclo anterior)"/>}
       {c3info ? (
-        <CicloBox cor="sky" titulo="🔵 Ciclo 3 — Questões (1h)" info={c3info} grupo_bloco={`${plano.c3.grupo}-${plano.c3.bloco}`} status={status.c3} onToggle={() => toggleStatus('c3')}/>
+        <CicloBox cor="sky" titulo="🔵 Ciclo 3 — Questões (1h)" info={c3info} grupo_bloco={`${plano.c3.grupo}-${plano.c3.bloco}`} status={status.c3}
+          pendencia={(state.pendencias || []).find(p => p.origem_dia_id === plano.id && p.ciclo === 'c3' && !p.concluida)}
+          onCumprir={() => toggleCumprido('c3')} onAdiar={() => abrirModalAdiar('c3')} onDesfazer={() => desfazerAdiamento('c3')}/>
       ) : <CicloVazio cor="sky" titulo="🔵 Ciclo 3 — Questões" texto="(menos de 7 dias de estudo — ainda sem ciclo 3)"/>}
+
+      {/* Pendências de outros dias alocadas para este dia (geralmente domingos) */}
+      {pendenciasDoDia(state, plano.id).length > 0 && (
+        <PendenciasAlocadas plano={plano} pendencias={pendenciasDoDia(state, plano.id)} state={state} setState={setState}/>
+      )}
+
+      {modalAdiar && (
+        <ModalAdiarCiclo
+          plano={plano}
+          ciclo={modalAdiar}
+          state={state}
+          onConfirmar={confirmarAdiamento}
+          onCancelar={() => setModalAdiar(null)}
+        />
+      )}
     </div>
   );
 }
-function CicloBox({ cor, titulo, info, grupo_bloco, status, onToggle, mostrarLei }) {
+function CicloBox({ cor, titulo, info, grupo_bloco, status, pendencia, onCumprir, onAdiar, onDesfazer, mostrarLei }) {
   const bg = cor === 'emerald' ? 'bg-emerald-50 border-emerald-200' : cor === 'amber' ? 'bg-amber-50 border-amber-200' : 'bg-sky-50 border-sky-200';
+  const ehAdiado = status === 'ADIADO';
+  const ehTardio = status === 'CUMPRIDO_TARDIO';
+  const ehCumprido = status === 'CUMPRIDO' || ehTardio;
   return (
-    <div className={`border rounded-lg p-3 ${bg}`}>
+    <div className={`border rounded-lg p-3 ${ehAdiado ? 'bg-violet-50 border-violet-200' : ehTardio ? 'bg-teal-50 border-teal-200' : bg}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="text-xs font-semibold text-slate-700 mb-1">{titulo}</div>
           <div className="text-sm font-medium text-slate-800">{grupo_bloco} · {info.disciplina}</div>
           <div className="text-xs text-slate-600 mt-1">{mostrarLei ? info.lei_seca : info.conteudo}</div>
+          {ehAdiado && pendencia && (
+            <div className="mt-2 text-xs text-violet-700 bg-violet-100 rounded px-2 py-1 inline-block">
+              📅 Adiado para {fmtData(DADOS.cronograma.find(d => d.id === pendencia.alocada_para_dia_id)?.data)}
+              {pendencia.descricao && <span className="block mt-0.5 italic">"{pendencia.descricao}"</span>}
+            </div>
+          )}
+          {ehTardio && (
+            <div className="mt-2 text-xs text-teal-700 bg-teal-100 rounded px-2 py-1 inline-block">
+              ✓ Cumprido em atraso (originalmente adiado e concluído no domingo)
+            </div>
+          )}
         </div>
-        <button onClick={onToggle} className={`flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-semibold transition ${status === 'CUMPRIDO' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'}`}>
-          {status === 'CUMPRIDO' ? '✓ Cumprido' : 'Marcar'}
-        </button>
+        <div className="flex-shrink-0 flex flex-col gap-1">
+          {ehAdiado ? (
+            <button onClick={onDesfazer} className="px-3 py-1.5 rounded-md text-xs font-semibold bg-white text-violet-700 border border-violet-300 hover:bg-violet-50">
+              Desfazer adiamento
+            </button>
+          ) : (
+            <>
+              <button onClick={onCumprir} className={`px-3 py-1.5 rounded-md text-xs font-semibold transition ${ehCumprido ? (ehTardio ? 'bg-teal-600 text-white' : 'bg-emerald-600 text-white') : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'}`}>
+                {ehTardio ? '✓ Cumprido (tardio)' : ehCumprido ? '✓ Cumprido' : 'Marcar cumprido'}
+              </button>
+              {!ehCumprido && (
+                <button onClick={onAdiar} className="px-3 py-1 rounded-md text-xs bg-white text-violet-700 border border-violet-300 hover:bg-violet-50">
+                  Adiar p/ domingo
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 function CicloVazio({ cor, titulo, texto }) {
   return <div className="border rounded-lg p-3 bg-slate-50 border-slate-200 text-slate-500"><div className="text-xs font-semibold mb-1">{titulo}</div><div className="text-xs italic">{texto}</div></div>;
+}
+
+// Modal de confirmação ao adiar um ciclo para o próximo domingo de pendências
+function ModalAdiarCiclo({ plano, ciclo, state, onConfirmar, onCancelar }) {
+  const [descricao, setDescricao] = useState('');
+  const destinoId = proximoDestinoPendencia(plano.data);
+  const destino = destinoId != null ? DADOS.cronograma.find(d => d.id === destinoId) : null;
+  // Quantas pendências já estão alocadas no destino?
+  const cargaAtual = destino ? pendenciasDoDia(state, destinoId).length : 0;
+  const sobrecarregado = cargaAtual >= 3;
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4" onClick={onCancelar}>
+      <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-5 fade-in" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-bold text-slate-800 text-lg mb-1">Adiar este ciclo?</h3>
+        <p className="text-xs text-slate-500 mb-3">
+          Você está adiando <strong>{ciclo.ciclo.toUpperCase()}</strong> ({ciclo.grupo_bloco} · {ciclo.disciplina}) de {fmtData(plano.data)} para o próximo domingo livre.
+        </p>
+
+        {!destino ? (
+          <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded text-xs text-red-800">
+            ⚠ <strong>Sem destino disponível.</strong> Não há mais domingos de pendências no cronograma após esta data. A pendência será criada mas ficará sem alocação automática — visível no Dashboard.
+          </div>
+        ) : (
+          <div className={`mb-3 p-3 rounded text-xs border ${sobrecarregado ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-violet-50 border-violet-200 text-violet-900'}`}>
+            📅 <strong>Destino:</strong> {destino.dia_sem} {fmtData(destino.data)} (id {destino.id})
+            <div className="mt-1 text-slate-700">
+              Carga atual desse dia: {cargaAtual} pendência{cargaAtual === 1 ? '' : 's'} já alocada{cargaAtual === 1 ? '' : 's'}.
+              {sobrecarregado && <strong className="block text-amber-700">⚠ Domingo sobrecarregado — considere fazer hoje se possível.</strong>}
+            </div>
+          </div>
+        )}
+
+        <div className="mb-3 p-3 bg-slate-50 border border-slate-200 rounded text-xs text-slate-700">
+          ⚠ <strong>Custo metodológico:</strong> adiar este ciclo desloca a revisão espaçada. O C3 deste bloco (questões 7 dias depois) parte do princípio de que a teoria/lei foi vista no dia certo. Use o adiamento como exceção.
+        </div>
+
+        <label className="block text-xs font-semibold text-slate-700 mb-1">Descrição do que ficou pendente (opcional)</label>
+        <textarea
+          value={descricao}
+          onChange={(e) => setDescricao(e.target.value.slice(0, 200))}
+          placeholder="Ex.: ler arts. 5º-12 da CF, parei no inciso XL"
+          className="w-full p-2 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-violet-300 focus:outline-none"
+          rows="2"
+        />
+        <div className="text-xs text-slate-400 text-right mb-3">{descricao.length}/200</div>
+
+        <div className="flex gap-2 justify-end">
+          <button onClick={onCancelar} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded">Cancelar</button>
+          <button onClick={() => onConfirmar(descricao)} className="px-4 py-2 bg-violet-600 text-white text-sm font-semibold rounded hover:bg-violet-700">
+            Confirmar adiamento
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Lista de pendências alocadas para o dia (renderizada em domingos e no sábado de pendências)
+function PendenciasAlocadas({ plano, pendencias, state, setState }) {
+  const concluirPendencia = (idPend) => {
+    setState(s => {
+      const pend = (s.pendencias || []).find(p => p.id === idPend);
+      if (!pend) return s;
+      // Marca pendência como concluída E promove ciclo de origem para CUMPRIDO_TARDIO
+      // (passa a contar no progresso, mas mantém marcador de que foi adiado)
+      return {
+        ...s,
+        pendencias: (s.pendencias || []).map(p => p.id === idPend ? { ...p, concluida: true, concluida_em: new Date().toISOString() } : p),
+        cronograma_status: {
+          ...s.cronograma_status,
+          [pend.origem_dia_id]: {
+            ...(s.cronograma_status[pend.origem_dia_id] || {c1:'PENDENTE',c2:'PENDENTE',c3:'PENDENTE'}),
+            [pend.ciclo]: 'CUMPRIDO_TARDIO'
+          }
+        }
+      };
+    });
+  };
+  const removerPendencia = (idPend) => {
+    if (!confirm('Remover esta pendência sem marcar como concluída?')) return;
+    setState(s => ({
+      ...s,
+      pendencias: (s.pendencias || []).filter(p => p.id !== idPend)
+    }));
+  };
+  return (
+    <div className="border border-violet-300 rounded-lg p-3 bg-violet-50">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs font-bold text-violet-900 uppercase tracking-wider">📥 Pendências alocadas para este dia ({pendencias.length})</div>
+      </div>
+      <div className="space-y-2">
+        {pendencias.map(pend => {
+          const info = blocoInfo(pend.grupo, pend.bloco);
+          const origem = DADOS.cronograma.find(d => d.id === pend.origem_dia_id);
+          return (
+            <div key={pend.id} className="bg-white rounded border border-violet-200 p-2 text-sm">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-slate-800">
+                    {pend.ciclo.toUpperCase()} · {pend.grupo}-{pend.bloco} · {info?.disciplina || '—'}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    Vindo de {origem ? fmtData(origem.data) : '—'} ({origem?.dia_sem})
+                  </div>
+                  {pend.descricao && (
+                    <div className="text-xs text-slate-700 italic mt-1 bg-violet-50 px-2 py-1 rounded">"{pend.descricao}"</div>
+                  )}
+                </div>
+                <div className="flex flex-col gap-1 flex-shrink-0">
+                  <button onClick={() => concluirPendencia(pend.id)} className="px-3 py-1 bg-emerald-600 text-white text-xs rounded hover:bg-emerald-700 font-semibold">
+                    ✓ Concluir
+                  </button>
+                  <button onClick={() => removerPendencia(pend.id)} className="px-3 py-1 bg-white text-slate-500 text-xs rounded border border-slate-200 hover:bg-slate-50">
+                    Remover
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 function Cronograma({ state, setState }) {
   const [semanaIdx, setSemanaIdx] = useState(() => {
@@ -836,10 +1156,8 @@ function Cronograma({ state, setState }) {
                   <div className="text-xl font-bold text-red-800">PROVA TJ-CE 2026</div>
                   <div className="text-sm text-red-600 mt-1">Manhã · 4 horas</div>
                 </div>
-              ) : plano.c1 ? (
-                <DiaDetalhe plano={plano} state={state} setState={setState}/>
               ) : (
-                <div className="text-slate-600 text-sm p-3 bg-slate-50 rounded">{plano.atividade}</div>
+                <DiaDetalhe plano={plano} state={state} setState={setState}/>
               )}
             </div>
           </div>

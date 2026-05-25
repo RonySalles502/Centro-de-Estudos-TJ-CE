@@ -2,6 +2,25 @@
 
 PWA para estudos do TJ-CE 2026 (Analista Judiciário — FCC).
 
+## Funcionalidades principais do app
+
+- **Cronograma de 84 dias** com 3 ciclos diários (Teoria / Lei seca / Questões)
+- **Cumprimento parcial e adiamento:** se algum ciclo não foi cumprido no dia, marque "Adiar p/ domingo" — o sistema:
+  - Aloca automaticamente para o próximo domingo de pendências disponível
+  - Pula domingos que já têm simulado programado (semanas 8-11)
+  - Se não houver mais domingos no horizonte, alfunaca para o sábado 08/08 (último abrigo)
+  - Alerta no Dashboard quando há acúmulo (≥ 3 pendências num mesmo domingo)
+- **Banco de questões originais** padrão FCC
+- **20 temas de redação** com espelhos completos
+- **Sistema de Pomodoro** integrado
+- **Revisão Espaçada (SRS)** com flashcards
+- **Calibração de confiança** (Certeza / Dúvida / Chute por questão)
+- **Simulados** com correção automática
+- **Apostas & Erros:** registro de questões resolvidas fora do app
+- **Notas por bloco**, anotações livres
+- **Dashboard** com estatísticas em tempo real
+- **Backup robusto:** IndexedDB + localStorage + snapshots automáticos (7 dias) + export manual + sync com pasta
+
 ## Como hospedar (escolha um caminho)
 
 ### Opção A — GitHub Pages (recomendado, permanente, gratuito)
