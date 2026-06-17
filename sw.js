@@ -2,7 +2,7 @@
 // Estratégia: cache-first para assets locais, network-first para CDNs (com fallback ao cache).
 // Bump CACHE_VERSION quando publicar mudanças significativas no HTML.
 
-const CACHE_VERSION = 'tjce-v3';
+const CACHE_VERSION = 'tjce-v4';
 const CACHE_NAME = `tjce-cache-${CACHE_VERSION}`;
 
 // Assets locais que devem ficar disponíveis offline assim que possível.
@@ -19,9 +19,9 @@ const ASSETS_LOCAIS = [
 // CDNs externos que o app usa em runtime (React, Tailwind, Babel).
 // Vão para o cache na primeira visita. Não pré-cacheamos para não falhar a instalação por causa de CORS.
 const CDNS_RUNTIME = [
-  'https://unpkg.com/react@18/',
-  'https://unpkg.com/react-dom@18/',
-  'https://unpkg.com/@babel/standalone/',
+  'https://cdnjs.cloudflare.com/ajax/libs/react/',
+  'https://cdnjs.cloudflare.com/ajax/libs/react-dom/',
+  'https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/',
   'https://cdn.tailwindcss.com',
 ];
 

@@ -17,10 +17,41 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="icon" type="image/svg+xml" href="icon.svg">
 
-<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" crossorigin></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js" crossorigin></script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script>
+// Diagnóstico: se em 8 segundos o React não montar nada na #root, mostra uma mensagem útil
+// em vez de tela branca silenciosa. Útil para casos de CDN fora do ar ou versão incompatível.
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    const root = document.getElementById('root');
+    if (root && root.children.length === 0) {
+      const cdnsOk = {
+        React: typeof window.React !== 'undefined',
+        ReactDOM: typeof window.ReactDOM !== 'undefined',
+        Babel: typeof window.Babel !== 'undefined',
+        Tailwind: typeof window.tailwind !== 'undefined',
+      };
+      const falhas = Object.entries(cdnsOk).filter(([,ok]) => !ok).map(([n]) => n);
+      root.innerHTML = `
+        <div style="max-width:560px;margin:60px auto;padding:24px;font-family:system-ui,sans-serif;background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;color:#7f1d1d;">
+          <h2 style="margin-top:0;">⚠ O app não conseguiu iniciar</h2>
+          <p>Provavelmente um dos recursos externos do app não carregou.</p>
+          <p><strong>Bibliotecas que falharam:</strong> ${falhas.length ? falhas.join(', ') : 'nenhuma identificada — verifique o Console (F12)'}</p>
+          <ol style="line-height:1.6;">
+            <li>Verifique sua conexão de internet.</li>
+            <li>Tente recarregar com <strong>Ctrl+Shift+R</strong> (Windows) ou <strong>Cmd+Shift+R</strong> (Mac).</li>
+            <li>Se o problema persistir, abra em modo anônimo. Se funcionar lá, limpe os dados do site (F12 → Application → Storage → Clear site data — mas <strong>exporte backup antes</strong>).</li>
+            <li>Em último caso, avise quem te passou o app — pode ser uma CDN quebrada.</li>
+          </ol>
+          <p style="margin-top:16px;font-size:13px;color:#991b1b;">Seus dados locais estão preservados — não foram apagados.</p>
+        </div>`;
+    }
+  }, 8000);
+});
+</script>
 <style>
   body{font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;}
   .scroll-thin::-webkit-scrollbar{width:8px;height:8px}
