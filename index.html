@@ -348,7 +348,7 @@ function defaultState() {
     pomodoro: { ciclos_total: 0, focos_minutos: 0 },
     streak: { ultima_data: null, dias_seguidos: 0 },
     ultimo_backup: null,
-    versao: 5,
+    versao: 6,
   };
 }
 // Migração defensiva: garante que estados salvos antes desta versão tenham os novos campos
@@ -367,8 +367,67 @@ function migrarEstado(s) {
     apostas_erros: Array.isArray(s.apostas_erros) ? s.apostas_erros.map(normalizarEntrada) : [],
     pendencias: Array.isArray(s.pendencias) ? s.pendencias : [],
     ultimo_backup: s.ultimo_backup || null,
-    versao: 5,
+    versao: 6,
   };
+}
+
+// ===================== DIAGNÓSTICO POR BLOCO (registro de % de acerto) =====================
+// O usuário registra acertos/total para qualquer ciclo. O sistema:
+//   - Mostra badge colorida no ciclo (verde ≥ 70%, amarelo 50-69%, vermelho < 50%)
+//   - Agrega por bloco (G-B): se o bloco aparece como C1, C2 ou C3 em vários dias, soma tudo
+//   - Exibe no Dashboard a lista de blocos com média < 70% como sinalizador de revisão
+const META_ACERTO = 70; // % alvo: abaixo disso, bloco entra na lista de revisão
+function pctAcerto(acertos, total) {
+  if (!total || total <= 0) return null;
+  return Math.round((acertos / total) * 100);
+}
+function corPct(p) {
+  if (p === null || p === undefined) return null;
+  if (p >= META_ACERTO) return 'emerald';
+  if (p >= 50) return 'amber';
+  return 'red';
+}
+// Agrega todos os registros de acertos por bloco (chave "G-B").
+// Considera C1/C2/C3 de todos os dias do cronograma que cubram esse bloco.
+function agregarPorBloco(state) {
+  const agg = {}; // { "G3-B4": { acertos, total, ocorrencias, disciplina, titulo } }
+  Object.entries(state.cronograma_status || {}).forEach(([diaId, status]) => {
+    const plano = DADOS.cronograma.find(p => p.id === Number(diaId));
+    if (!plano) return;
+    ['c1','c2','c3'].forEach(cic => {
+      const ciclo = plano[cic];
+      if (!ciclo) return;
+      const acertos = status[cic + '_acertos'];
+      const total = status[cic + '_total'];
+      if (typeof acertos !== 'number' || typeof total !== 'number' || total <= 0) return;
+      const k = `${ciclo.grupo}-${ciclo.bloco}`;
+      if (!agg[k]) {
+        const info = blocoInfo(ciclo.grupo, ciclo.bloco);
+        agg[k] = {
+          chave: k,
+          grupo: ciclo.grupo,
+          bloco: ciclo.bloco,
+          disciplina: info?.disciplina || '',
+          titulo: info?.titulo || info?.conteudo?.slice(0, 60) || '',
+          acertos: 0,
+          total: 0,
+          ocorrencias: 0,
+        };
+      }
+      agg[k].acertos += acertos;
+      agg[k].total += total;
+      agg[k].ocorrencias += 1;
+    });
+  });
+  // Adiciona pct calculado
+  Object.values(agg).forEach(b => { b.pct = pctAcerto(b.acertos, b.total); });
+  return agg;
+}
+function blocosParaRevisar(state) {
+  const agg = agregarPorBloco(state);
+  return Object.values(agg)
+    .filter(b => b.pct !== null && b.pct < META_ACERTO)
+    .sort((a, b) => a.pct - b.pct);
 }
 
 // ===================== PENDÊNCIAS (cumprimento parcial + realocação para domingo) =====================
@@ -808,6 +867,45 @@ function Dashboard({ state, setState, dias, pctCronograma, setView, nomeExibido 
         </div>
       )}
 
+      {/* Bloco de diagnóstico: blocos com média de acertos abaixo de META_ACERTO */}
+      {(() => {
+        const revisar = blocosParaRevisar(state);
+        if (revisar.length === 0) return null;
+        return (
+          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4">
+            <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+              <div>
+                <div className="font-bold text-slate-800">📉 Blocos para revisar — abaixo de {META_ACERTO}% de acerto</div>
+                <div className="text-xs text-slate-600 mt-0.5">{revisar.length} bloco{revisar.length === 1 ? '' : 's'} sinalizado{revisar.length === 1 ? '' : 's'}. Priorize estes na próxima rodada de estudo.</div>
+              </div>
+              <button onClick={() => setView('cronograma')} className="px-3 py-1.5 bg-red-600 text-white text-xs rounded font-semibold hover:bg-red-700">
+                Ver no cronograma
+              </button>
+            </div>
+            <div className="space-y-1.5">
+              {revisar.slice(0, 8).map(b => {
+                const corP = corPct(b.pct);
+                const bgCor = corP === 'amber' ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-red-100 text-red-800 border-red-300';
+                return (
+                  <div key={b.chave} className="flex items-center justify-between gap-3 bg-white rounded border border-slate-200 px-3 py-2 text-sm">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-slate-800">{b.chave} · {b.disciplina}</div>
+                      <div className="text-xs text-slate-500 truncate">{b.titulo}</div>
+                    </div>
+                    <div className={`flex-shrink-0 px-2 py-1 rounded border font-bold text-xs ${bgCor}`}>
+                      {b.acertos}/{b.total} · {b.pct}%
+                    </div>
+                  </div>
+                );
+              })}
+              {revisar.length > 8 && (
+                <div className="text-xs text-slate-500 text-center pt-1">... e mais {revisar.length - 8} bloco{revisar.length - 8 === 1 ? '' : 's'}</div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-5">
           <div className="flex items-center justify-between mb-4">
@@ -864,6 +962,7 @@ function QuickAction({ icon, title, desc, onClick }) {
 // ===================== CRONOGRAMA =====================
 function DiaDetalhe({ plano, state, setState }) {
   const [modalAdiar, setModalAdiar] = useState(null); // { ciclo, grupo_bloco, descricao_inicial }
+  const [modalQuestoes, setModalQuestoes] = useState(null); // { ciclo, grupo_bloco, disciplina, acertos_atuais, total_atuais }
 
   // Render especial para dias sem ciclos (domingos, sábados de simulado, etc)
   if (!plano.c1) {
@@ -938,24 +1037,74 @@ function DiaDetalhe({ plano, state, setState }) {
     setModalAdiar(null);
   };
 
+  const abrirModalQuestoes = (cic) => {
+    const dadosCiclo = plano[cic];
+    if (!dadosCiclo) return;
+    const info = blocoInfo(dadosCiclo.grupo, dadosCiclo.bloco);
+    const st = status;
+    setModalQuestoes({
+      ciclo: cic,
+      grupo_bloco: `${dadosCiclo.grupo}-${dadosCiclo.bloco}`,
+      disciplina: info?.disciplina || '',
+      acertos_atuais: st[cic + '_acertos'] ?? '',
+      total_atuais: st[cic + '_total'] ?? '',
+    });
+  };
+  const confirmarQuestoes = (acertos, total) => {
+    if (!modalQuestoes) return;
+    const cic = modalQuestoes.ciclo;
+    setState(s => ({...s,
+      cronograma_status: {...s.cronograma_status,
+        [plano.id]: {
+          ...(s.cronograma_status[plano.id] || {c1:'PENDENTE',c2:'PENDENTE',c3:'PENDENTE'}),
+          [cic + '_acertos']: acertos,
+          [cic + '_total']: total,
+        }
+      }
+    }));
+    setModalQuestoes(null);
+  };
+  const limparQuestoes = () => {
+    if (!modalQuestoes) return;
+    const cic = modalQuestoes.ciclo;
+    setState(s => {
+      const novoStatusDia = {...(s.cronograma_status[plano.id] || {c1:'PENDENTE',c2:'PENDENTE',c3:'PENDENTE'})};
+      delete novoStatusDia[cic + '_acertos'];
+      delete novoStatusDia[cic + '_total'];
+      return {...s, cronograma_status: {...s.cronograma_status, [plano.id]: novoStatusDia}};
+    });
+    setModalQuestoes(null);
+  };
+
   const c1info = blocoInfo(plano.c1?.grupo, plano.c1?.bloco);
   const c2info = blocoInfo(plano.c2?.grupo, plano.c2?.bloco);
   const c3info = blocoInfo(plano.c3?.grupo, plano.c3?.bloco);
+  // Configuração de títulos/comportamento dos ciclos (DADOS.config existe na versão Lívia, ausente na padrão)
+  const cfg = (DADOS.config) || {};
+  const titulo_c1 = cfg.titulo_c1 || '🟢 Ciclo 1 — Teoria (1h30)';
+  const titulo_c2 = cfg.titulo_c2 || '🟡 Ciclo 2 — Lei seca focada (30 min)';
+  const titulo_c3 = cfg.titulo_c3 || '🔵 Ciclo 3 — Questões (1h)';
+  const vazio_c2 = cfg.vazio_c2 || '(primeiro dia — sem ciclo anterior)';
+  const vazio_c3 = cfg.vazio_c3 || '(menos de 7 dias de estudo — ainda sem ciclo 3)';
+  const c2_eh_lei_seca = cfg.c2_eh_lei_seca !== false; // default true
   return (
     <div className="space-y-3">
-      <CicloBox cor="emerald" titulo="🟢 Ciclo 1 — Teoria (1h30)" info={c1info} grupo_bloco={`${plano.c1.grupo}-${plano.c1.bloco}`} status={status.c1}
+      <CicloBox cor="emerald" titulo={titulo_c1} info={c1info} grupo_bloco={`${plano.c1.grupo}-${plano.c1.bloco}`} status={status.c1}
+        acertos={status.c1_acertos} total={status.c1_total}
         pendencia={(state.pendencias || []).find(p => p.origem_dia_id === plano.id && p.ciclo === 'c1' && !p.concluida)}
-        onCumprir={() => toggleCumprido('c1')} onAdiar={() => abrirModalAdiar('c1')} onDesfazer={() => desfazerAdiamento('c1')}/>
+        onCumprir={() => toggleCumprido('c1')} onAdiar={() => abrirModalAdiar('c1')} onDesfazer={() => desfazerAdiamento('c1')} onRegistrarQuestoes={() => abrirModalQuestoes('c1')}/>
       {c2info ? (
-        <CicloBox cor="amber" titulo="🟡 Ciclo 2 — Lei seca focada (30 min)" info={c2info} grupo_bloco={`${plano.c2.grupo}-${plano.c2.bloco}`} status={status.c2}
+        <CicloBox cor="amber" titulo={titulo_c2} info={c2info} grupo_bloco={`${plano.c2.grupo}-${plano.c2.bloco}`} status={status.c2}
+          acertos={status.c2_acertos} total={status.c2_total}
           pendencia={(state.pendencias || []).find(p => p.origem_dia_id === plano.id && p.ciclo === 'c2' && !p.concluida)}
-          onCumprir={() => toggleCumprido('c2')} onAdiar={() => abrirModalAdiar('c2')} onDesfazer={() => desfazerAdiamento('c2')} mostrarLei/>
-      ) : <CicloVazio cor="amber" titulo="🟡 Ciclo 2 — Lei seca" texto="(primeiro dia — sem ciclo anterior)"/>}
+          onCumprir={() => toggleCumprido('c2')} onAdiar={() => abrirModalAdiar('c2')} onDesfazer={() => desfazerAdiamento('c2')} onRegistrarQuestoes={() => abrirModalQuestoes('c2')} mostrarLei={c2_eh_lei_seca}/>
+      ) : <CicloVazio cor="amber" titulo={titulo_c2} texto={vazio_c2}/>}
       {c3info ? (
-        <CicloBox cor="sky" titulo="🔵 Ciclo 3 — Questões (1h)" info={c3info} grupo_bloco={`${plano.c3.grupo}-${plano.c3.bloco}`} status={status.c3}
+        <CicloBox cor="sky" titulo={titulo_c3} info={c3info} grupo_bloco={`${plano.c3.grupo}-${plano.c3.bloco}`} status={status.c3}
+          acertos={status.c3_acertos} total={status.c3_total}
           pendencia={(state.pendencias || []).find(p => p.origem_dia_id === plano.id && p.ciclo === 'c3' && !p.concluida)}
-          onCumprir={() => toggleCumprido('c3')} onAdiar={() => abrirModalAdiar('c3')} onDesfazer={() => desfazerAdiamento('c3')}/>
-      ) : <CicloVazio cor="sky" titulo="🔵 Ciclo 3 — Questões" texto="(menos de 7 dias de estudo — ainda sem ciclo 3)"/>}
+          onCumprir={() => toggleCumprido('c3')} onAdiar={() => abrirModalAdiar('c3')} onDesfazer={() => desfazerAdiamento('c3')} onRegistrarQuestoes={() => abrirModalQuestoes('c3')}/>
+      ) : <CicloVazio cor="sky" titulo={titulo_c3} texto={vazio_c3}/>}
 
       {/* Pendências de outros dias alocadas para este dia (geralmente domingos) */}
       {pendenciasDoDia(state, plano.id).length > 0 && (
@@ -971,19 +1120,39 @@ function DiaDetalhe({ plano, state, setState }) {
           onCancelar={() => setModalAdiar(null)}
         />
       )}
+      {modalQuestoes && (
+        <ModalRegistrarQuestoes
+          ciclo={modalQuestoes}
+          onConfirmar={confirmarQuestoes}
+          onLimpar={limparQuestoes}
+          onCancelar={() => setModalQuestoes(null)}
+        />
+      )}
     </div>
   );
 }
-function CicloBox({ cor, titulo, info, grupo_bloco, status, pendencia, onCumprir, onAdiar, onDesfazer, mostrarLei }) {
+function CicloBox({ cor, titulo, info, grupo_bloco, status, acertos, total, pendencia, onCumprir, onAdiar, onDesfazer, onRegistrarQuestoes, mostrarLei }) {
   const bg = cor === 'emerald' ? 'bg-emerald-50 border-emerald-200' : cor === 'amber' ? 'bg-amber-50 border-amber-200' : 'bg-sky-50 border-sky-200';
   const ehAdiado = status === 'ADIADO';
   const ehTardio = status === 'CUMPRIDO_TARDIO';
   const ehCumprido = status === 'CUMPRIDO' || ehTardio;
+  const pct = pctAcerto(acertos, total);
+  const corP = corPct(pct);
+  const classesBadge = corP === 'emerald' ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+    : corP === 'amber' ? 'bg-amber-100 text-amber-800 border-amber-300'
+    : corP === 'red' ? 'bg-red-100 text-red-800 border-red-300' : '';
   return (
     <div className={`border rounded-lg p-3 ${ehAdiado ? 'bg-violet-50 border-violet-200' : ehTardio ? 'bg-teal-50 border-teal-200' : bg}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-semibold text-slate-700 mb-1">{titulo}</div>
+          <div className="text-xs font-semibold text-slate-700 mb-1 flex items-center gap-2 flex-wrap">
+            <span>{titulo}</span>
+            {pct !== null && (
+              <span className={`text-xs px-2 py-0.5 rounded border font-bold ${classesBadge}`}>
+                {acertos}/{total} · {pct}%
+              </span>
+            )}
+          </div>
           <div className="text-sm font-medium text-slate-800">{grupo_bloco} · {info.disciplina}</div>
           <div className="text-xs text-slate-600 mt-1">{mostrarLei ? info.lei_seca : info.conteudo}</div>
           {ehAdiado && pendencia && (
@@ -995,6 +1164,11 @@ function CicloBox({ cor, titulo, info, grupo_bloco, status, pendencia, onCumprir
           {ehTardio && (
             <div className="mt-2 text-xs text-teal-700 bg-teal-100 rounded px-2 py-1 inline-block">
               ✓ Cumprido em atraso (originalmente adiado e concluído no domingo)
+            </div>
+          )}
+          {pct !== null && pct < META_ACERTO && !ehAdiado && (
+            <div className="mt-2 text-xs text-red-700 bg-red-100 rounded px-2 py-1 inline-block">
+              ⚠ Rendimento abaixo de {META_ACERTO}% — bloco precisa de revisão
             </div>
           )}
         </div>
@@ -1013,6 +1187,9 @@ function CicloBox({ cor, titulo, info, grupo_bloco, status, pendencia, onCumprir
                   Adiar p/ domingo
                 </button>
               )}
+              <button onClick={onRegistrarQuestoes} className="px-3 py-1 rounded-md text-xs bg-white text-slate-700 border border-slate-300 hover:bg-slate-50">
+                📊 {pct !== null ? 'Editar questões' : 'Registrar questões'}
+              </button>
             </>
           )}
         </div>
@@ -1073,6 +1250,85 @@ function ModalAdiarCiclo({ plano, ciclo, state, onConfirmar, onCancelar }) {
           <button onClick={onCancelar} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded">Cancelar</button>
           <button onClick={() => onConfirmar(descricao)} className="px-4 py-2 bg-violet-600 text-white text-sm font-semibold rounded hover:bg-violet-700">
             Confirmar adiamento
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Modal para registrar acertos/total de questões resolvidas (no app ou externamente) para um ciclo
+function ModalRegistrarQuestoes({ ciclo, onConfirmar, onLimpar, onCancelar }) {
+  const [acertos, setAcertos] = useState(ciclo.acertos_atuais !== '' ? String(ciclo.acertos_atuais) : '');
+  const [total, setTotal] = useState(ciclo.total_atuais !== '' ? String(ciclo.total_atuais) : '');
+  const aNum = parseInt(acertos, 10);
+  const tNum = parseInt(total, 10);
+  const valido = Number.isFinite(aNum) && Number.isFinite(tNum) && tNum > 0 && aNum >= 0 && aNum <= tNum;
+  const pct = valido ? Math.round((aNum / tNum) * 100) : null;
+  const corP = corPct(pct);
+  const corBadge = corP === 'emerald' ? 'text-emerald-700' : corP === 'amber' ? 'text-amber-700' : corP === 'red' ? 'text-red-700' : 'text-slate-500';
+  const jaTinhaRegistro = ciclo.total_atuais !== '' && ciclo.total_atuais > 0;
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4" onClick={onCancelar}>
+      <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-5 fade-in" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-bold text-slate-800 text-lg mb-1">📊 Registrar questões resolvidas</h3>
+        <p className="text-xs text-slate-500 mb-3">
+          <strong>{ciclo.ciclo.toUpperCase()}</strong> · {ciclo.grupo_bloco} · {ciclo.disciplina}
+        </p>
+        <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded p-3 mb-3">
+          Registre quantas questões você resolveu deste bloco (dentro ou fora do app) e quantas acertou.
+          O sistema mostra sua média por bloco e sinaliza quais precisam de revisão (abaixo de {META_ACERTO}%).
+          Você pode atualizar este valor sempre que resolver mais questões — o sistema acumula automaticamente por bloco (G-B), mesmo se o mesmo bloco aparecer em outros dias.
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Acertos</label>
+            <input type="number" min="0" inputMode="numeric"
+              value={acertos} onChange={(e) => setAcertos(e.target.value.replace(/[^0-9]/g, ''))}
+              className="w-full p-2 border border-slate-300 rounded text-sm text-center focus:ring-2 focus:ring-emerald-300 focus:outline-none"
+              placeholder="0"/>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Total resolvido</label>
+            <input type="number" min="1" inputMode="numeric"
+              value={total} onChange={(e) => setTotal(e.target.value.replace(/[^0-9]/g, ''))}
+              className="w-full p-2 border border-slate-300 rounded text-sm text-center focus:ring-2 focus:ring-emerald-300 focus:outline-none"
+              placeholder="0"/>
+          </div>
+        </div>
+
+        {valido ? (
+          <div className="mb-3 p-3 bg-slate-50 border border-slate-200 rounded text-center">
+            <div className="text-xs text-slate-500">Rendimento neste registro</div>
+            <div className={`text-2xl font-bold ${corBadge}`}>{pct}%</div>
+            {pct < META_ACERTO && <div className="text-xs text-red-700 mt-1">⚠ Abaixo de {META_ACERTO}% — bloco será sinalizado para revisão</div>}
+            {pct >= META_ACERTO && pct < 85 && <div className="text-xs text-emerald-700 mt-1">✓ Dentro da meta</div>}
+            {pct >= 85 && <div className="text-xs text-emerald-700 mt-1">✓ Excelente domínio</div>}
+          </div>
+        ) : (
+          (acertos !== '' || total !== '') && (
+            <div className="mb-3 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+              {!Number.isFinite(tNum) || tNum <= 0 ? 'Informe o total de questões (maior que zero).' :
+               aNum > tNum ? 'Acertos não pode ser maior que o total.' :
+               'Verifique os valores.'}
+            </div>
+          )
+        )}
+
+        <div className="flex gap-2 justify-end items-center flex-wrap">
+          {jaTinhaRegistro && (
+            <button onClick={() => { if (confirm('Apagar o registro de questões deste ciclo?')) onLimpar(); }} className="px-3 py-2 text-xs text-red-600 hover:bg-red-50 rounded">
+              Apagar registro
+            </button>
+          )}
+          <div className="flex-1"></div>
+          <button onClick={onCancelar} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded">Cancelar</button>
+          <button onClick={() => valido && onConfirmar(aNum, tNum)}
+            disabled={!valido}
+            className="px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed">
+            Salvar
           </button>
         </div>
       </div>
